@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  techtrends:
+    build: .
+    container_name: techtrends_app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - ENVIRONMENT=production
+    restart: unless-stopped
