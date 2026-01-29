@@ -21,6 +21,9 @@ from src.api_devto import DevToAPI
 from src.data_processing import DataProcessor
 from src.database import Database
 from config import TECH_KEYWORDS, MAX_ARTICLES_PER_SOURCE
+@st.cache_resource
+def get_db() -> Database:
+    return Database()
 
 # Configuration de la page
 st.set_page_config(
@@ -112,20 +115,32 @@ st.markdown(
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
     st.session_state.df = pd.DataFrame()
-    st.session_state.db = Database()
+    st.session_state.db = get_db()
     st.session_state.last_refresh = None
+
+
+
+@st.cache_data(show_spinner=False)
+def _load_data_from_db(limit: int = 200) -> pd.DataFrame:
+    """Lecture des articles depuis SQLite (mise en cache)."""
+    db = get_db()
+    return db.get_all_articles(limit=limit)
 
 
 def load_data(use_cache: bool = True) -> pd.DataFrame:
     """Charge les données depuis les sources et/ou la base SQLite."""
     with st.spinner("🔄 Chargement des données..."):
+        # 1) Essayer d'abord la base si cache demandé
         if use_cache:
-            df = st.session_state.db.get_all_articles(limit=200)
+            df = _load_data_from_db(limit=200)
             if not df.empty:
                 st.success(f"✅ {len(df)} articles chargés depuis la base de données")
                 st.session_state.last_refresh = datetime.now()
+                st.session_state.df = df
+                st.session_state.data_loaded = True
                 return df
 
+        # 2) Sinon, scraping + API (opération plus lourde)
         st.info("📡 Scraping Hacker News...")
         hn_scraper = HackerNewsScraper(max_articles=MAX_ARTICLES_PER_SOURCE)
         hn_articles = hn_scraper.scrape_frontpage()
@@ -141,13 +156,19 @@ def load_data(use_cache: bool = True) -> pd.DataFrame:
         df = processor.merge_sources(hn_df, devto_df)
         df = processor.categorize_by_keywords(df, TECH_KEYWORDS)
 
+        # 3) Sauvegarde en base + mise à jour session
         if not df.empty:
+            db = get_db()
             articles_list = df.to_dict("records")
-            inserted = st.session_state.db.insert_articles(articles_list)
+            inserted = db.insert_articles(articles_list)
             st.success(f"✅ {len(df)} articles récupérés ({inserted} nouveaux)")
             st.session_state.last_refresh = datetime.now()
+            st.session_state.df = df
+            st.session_state.data_loaded = True
 
         return df
+
+
 
 
 def _start_card():
